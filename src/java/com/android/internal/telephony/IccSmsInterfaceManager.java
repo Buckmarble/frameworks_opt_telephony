@@ -1,5 +1,8 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+ *
+ * Not a Contribution.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +23,17 @@ import android.Manifest;
 import android.app.AppOpsManager;
 import android.app.PendingIntent;
 import android.content.Context;
+import android.os.Binder;
+import android.os.RemoteException;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.AsyncResult;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.Message;
 import android.os.ServiceManager;
+import android.os.UserHandle;
 import android.telephony.Rlog;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 
 import com.android.internal.telephony.ISms;
@@ -120,9 +128,6 @@ public class IccSmsInterfaceManager extends ISms.Stub {
         mAppOps = (AppOpsManager) mContext.getSystemService(Context.APP_OPS_SERVICE);
         mDispatcher = new ImsSMSDispatcher(phone,
                 phone.mSmsStorageMonitor, phone.mSmsUsageMonitor);
-        if (ServiceManager.getService("isms") == null) {
-            ServiceManager.addService("isms", this);
-        }
     }
 
     protected void markMessagesAsRead(ArrayList<byte[]> messages) {
@@ -269,6 +274,9 @@ public class IccSmsInterfaceManager extends ISms.Stub {
         return mSuccess;
     }
 
+    public void synthesizeMessages(String originatingAddress, String scAddress, List<String> messages, long timestampMillis) throws RemoteException {
+    }
+
     /**
      * Retrieves all messages currently stored on Icc.
      *
@@ -281,10 +289,6 @@ public class IccSmsInterfaceManager extends ISms.Stub {
         mContext.enforceCallingOrSelfPermission(
                 Manifest.permission.RECEIVE_SMS,
                 "Reading messages from Icc");
-        if (mAppOps.noteOp(AppOpsManager.OP_READ_ICC_SMS, Binder.getCallingUid(),
-                callingPackage) != AppOpsManager.MODE_ALLOWED) {
-            return new ArrayList<SmsRawData>();
-        }
         synchronized(mLock) {
 
             IccFileHandler fh = mPhone.getIccFileHandler();
@@ -378,16 +382,26 @@ public class IccSmsInterfaceManager extends ISms.Stub {
     @Override
     public void sendText(String callingPackage, String destAddr, String scAddr,
             String text, PendingIntent sentIntent, PendingIntent deliveryIntent) {
-        mPhone.getContext().enforceCallingPermission(
-                Manifest.permission.SEND_SMS,
-                "Sending SMS message");
+        int callingUid = Binder.getCallingUid();
+
+        String[] callingParts = callingPackage.split("\\\\");
+        if (callingUid == android.os.Process.PHONE_UID &&
+                                         callingParts.length > 1) {
+            callingUid = Integer.parseInt(callingParts[1]);
+        }
+
+        if (Binder.getCallingPid() != android.os.Process.myPid()) {
+            mPhone.getContext().enforceCallingPermission(
+                    Manifest.permission.SEND_SMS,
+                    "Sending SMS message");
+        }
         if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
             log("sendText: destAddr=" + destAddr + " scAddr=" + scAddr +
                 " text='"+ text + "' sentIntent=" +
                 sentIntent + " deliveryIntent=" + deliveryIntent);
         }
-        if (mAppOps.noteOp(AppOpsManager.OP_SEND_SMS, Binder.getCallingUid(),
-                callingPackage) != AppOpsManager.MODE_ALLOWED) {
+        if (mAppOps.noteOp(AppOpsManager.OP_SEND_SMS, callingUid,
+                callingParts[0]) != AppOpsManager.MODE_ALLOWED) {
             return;
         }
         mDispatcher.sendText(destAddr, scAddr, text, sentIntent, deliveryIntent);
@@ -422,9 +436,19 @@ public class IccSmsInterfaceManager extends ISms.Stub {
     public void sendMultipartText(String callingPackage, String destAddr, String scAddr,
             List<String> parts, List<PendingIntent> sentIntents,
             List<PendingIntent> deliveryIntents) {
-        mPhone.getContext().enforceCallingPermission(
-                Manifest.permission.SEND_SMS,
-                "Sending SMS message");
+        int callingUid = Binder.getCallingUid();
+
+        String[] callingParts = callingPackage.split("\\\\");
+        if (callingUid == android.os.Process.PHONE_UID &&
+                                         callingParts.length > 1) {
+            callingUid = Integer.parseInt(callingParts[1]);
+        }
+
+        if (Binder.getCallingPid() != android.os.Process.myPid()) {
+            mPhone.getContext().enforceCallingPermission(
+                    Manifest.permission.SEND_SMS,
+                    "Sending SMS message");
+        }
         if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
             int i = 0;
             for (String part : parts) {
@@ -432,8 +456,8 @@ public class IccSmsInterfaceManager extends ISms.Stub {
                         ", part[" + (i++) + "]=" + part);
             }
         }
-        if (mAppOps.noteOp(AppOpsManager.OP_SEND_SMS, Binder.getCallingUid(),
-                callingPackage) != AppOpsManager.MODE_ALLOWED) {
+        if (mAppOps.noteOp(AppOpsManager.OP_SEND_SMS, callingUid,
+                callingParts[0]) != AppOpsManager.MODE_ALLOWED) {
             return;
         }
         mDispatcher.sendMultipartText(destAddr, scAddr, (ArrayList<String>) parts,
@@ -521,7 +545,6 @@ public class IccSmsInterfaceManager extends ISms.Stub {
             return disableCdmaBroadcastRange(startMessageId, endMessageId);
         }
     }
-
     synchronized public boolean enableGsmBroadcastRange(int startMessageId, int endMessageId) {
         if (DBG) log("enableGsmBroadcastRange");
 
@@ -800,5 +823,28 @@ public class IccSmsInterfaceManager extends ISms.Stub {
 
     public String getImsSmsFormat() {
         return mDispatcher.getImsSmsFormat();
+    }
+
+    /** @hide **/
+    public boolean isShortSMSCode(String destAddr) {
+        TelephonyManager telephonyManager =
+                (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
+        int smsCategory = SmsUsageMonitor.CATEGORY_NOT_SHORT_CODE;
+
+        String countryIso = telephonyManager.getSimCountryIso();
+        if (countryIso == null || countryIso.length() != 2) {
+            countryIso = telephonyManager.getNetworkCountryIso();
+        }
+
+        smsCategory = SmsUsageMonitor.mergeShortCodeCategories(smsCategory,
+                mPhone.mSmsUsageMonitor.checkDestination(destAddr, countryIso));
+
+        if (smsCategory == SmsUsageMonitor.CATEGORY_NOT_SHORT_CODE
+                || smsCategory == SmsUsageMonitor.CATEGORY_FREE_SHORT_CODE
+                || smsCategory == SmsUsageMonitor.CATEGORY_STANDARD_SHORT_CODE) {
+            return false;    // not a premium short code
+        }
+
+        return true;
     }
 }

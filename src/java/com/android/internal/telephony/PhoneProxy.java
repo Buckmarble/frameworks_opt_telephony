@@ -51,10 +51,13 @@ public class PhoneProxy extends Handler implements Phone {
     private IccPhoneBookInterfaceManagerProxy mIccPhoneBookInterfaceManagerProxy;
     private PhoneSubInfoProxy mPhoneSubInfoProxy;
     private IccCardProxy mIccCardProxy;
+    private IccSmsInterfaceManagerProxy mIccSmsInterfaceManagerProxy;
 
     private boolean mResetModemOnRadioTechnologyChange = false;
 
     private int mRilVersion;
+    private boolean mRilV7NeedsCDMALTEPhone = SystemProperties.getBoolean(
+                    "telephony.rilV7NeedCDMALTEPhone", false);
 
     private static final int EVENT_VOICE_RADIO_TECH_CHANGED = 1;
     private static final int EVENT_RADIO_ON = 2;
@@ -75,6 +78,9 @@ public class PhoneProxy extends Handler implements Phone {
                 phone.getIccPhoneBookInterfaceManager());
         mPhoneSubInfoProxy = new PhoneSubInfoProxy(phone.getPhoneSubInfo());
         mCommandsInterface = ((PhoneBase)mActivePhone).mCi;
+
+        mIccSmsInterfaceManagerProxy =
+            new IccSmsInterfaceManagerProxy(mActivePhone.getContext(), mIccSmsInterfaceManager);
 
         mCommandsInterface.registerForRilConnected(this, EVENT_RIL_CONNECTED, null);
         mCommandsInterface.registerForOn(this, EVENT_RADIO_ON, null);
@@ -159,7 +165,8 @@ public class PhoneProxy extends Handler implements Phone {
                 }
             }
 
-            if(mRilVersion == 6 && getLteOnCdmaMode() == PhoneConstants.LTE_ON_CDMA_TRUE) {
+            if((mRilVersion == 6 && getLteOnCdmaMode() == PhoneConstants.LTE_ON_CDMA_TRUE) ||
+                mRilV7NeedsCDMALTEPhone) {
                 /*
                  * On v6 RIL, when LTE_ON_CDMA is TRUE, always create CDMALTEPhone
                  * irrespective of the voice radio tech reported.
@@ -1163,6 +1170,14 @@ public class PhoneProxy extends Handler implements Phone {
     @Override
     public int getLteOnCdmaMode() {
         return mActivePhone.getLteOnCdmaMode();
+    }
+
+    /**
+     * {@hide}
+     */
+    @Override
+    public int getLteOnGsmMode() {
+        return mActivePhone.getLteOnGsmMode();
     }
 
     @Override

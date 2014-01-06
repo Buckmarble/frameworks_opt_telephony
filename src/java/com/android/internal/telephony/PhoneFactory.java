@@ -20,6 +20,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.net.LocalServerSocket;
 import android.os.Looper;
+import android.os.SystemProperties;
 import android.provider.Settings;
 import android.telephony.Rlog;
 import android.telephony.TelephonyManager;
@@ -31,6 +32,8 @@ import com.android.internal.telephony.gsm.GSMPhone;
 import com.android.internal.telephony.sip.SipPhone;
 import com.android.internal.telephony.sip.SipPhoneFactory;
 import com.android.internal.telephony.uicc.UiccController;
+
+import java.lang.reflect.Constructor;
 
 /**
  * {@hide}
@@ -103,6 +106,9 @@ public class PhoneFactory {
                 if (TelephonyManager.getLteOnCdmaModeStatic() == PhoneConstants.LTE_ON_CDMA_TRUE) {
                     preferredNetworkMode = Phone.NT_MODE_GLOBAL;
                 }
+                if (TelephonyManager.getLteOnGsmModeStatic() != 0) {
+                    preferredNetworkMode = Phone.NT_MODE_LTE_GSM_WCDMA;
+                }
                 int networkMode = Settings.Global.getInt(context.getContentResolver(),
                         Settings.Global.PREFERRED_NETWORK_MODE, preferredNetworkMode);
                 Rlog.i(LOG_TAG, "Network Mode set to " + Integer.toString(networkMode));
@@ -111,7 +117,20 @@ public class PhoneFactory {
                 Rlog.i(LOG_TAG, "Cdma Subscription set to " + cdmaSubscription);
 
                 //reads the system properties and makes commandsinterface
-                sCommandsInterface = new RIL(context, networkMode, cdmaSubscription);
+                String sRILClassname = SystemProperties.get("ro.telephony.ril_class", "RIL");
+                Rlog.i(LOG_TAG, "RILClassname is " + sRILClassname);
+
+                // Use reflection to construct the RIL class (defaults to RIL)
+                try {
+                    Class<?> classDefinition = Class.forName("com.android.internal.telephony." + sRILClassname);
+                    Constructor<?> constructor = classDefinition.getConstructor(new Class[] {Context.class, int.class, int.class});
+                    sCommandsInterface = (RIL) constructor.newInstance(new Object[] {context, networkMode, cdmaSubscription});
+                } catch (Exception e) {
+                    // 6 different types of exceptions are thrown here that it's
+                    // easier to just catch Exception as our "error handling" is the same.
+                    Rlog.i(LOG_TAG, "Unable to construct command interface", e);
+                    throw new RuntimeException(e);
+                }
 
                 // Instantiate UiccController so that all other classes can just call getInstance()
                 UiccController.make(context, sCommandsInterface);

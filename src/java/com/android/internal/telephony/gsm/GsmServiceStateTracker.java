@@ -923,7 +923,7 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
 
         if (hasRilDataRadioTechnologyChanged) {
             mPhone.setSystemProperty(TelephonyProperties.PROPERTY_DATA_NETWORK_TYPE,
-                    ServiceState.rilRadioTechnologyToString(mSS.getRilVoiceRadioTechnology()));
+                    ServiceState.rilRadioTechnologyToString(mSS.getRilDataRadioTechnology()));
         }
 
         if (hasRegistered) {
@@ -1403,7 +1403,7 @@ final class GsmServiceStateTracker extends ServiceStateTracker {
      */
     @Override
     public boolean isConcurrentVoiceAndDataAllowed() {
-        return (mSS.getRilVoiceRadioTechnology() >= ServiceState.RIL_RADIO_TECHNOLOGY_UMTS);
+        return (mSS.getRilDataRadioTechnology() >= ServiceState.RIL_RADIO_TECHNOLOGY_UMTS);
     }
 
     /**
